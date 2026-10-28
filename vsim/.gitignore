@@ -1,0 +1,16 @@
+obj_dir/
+regression_images/current/
+screenshot_frame_*.png
+*.png
+!regression_images/golden/*.png
+*.vcd
+*.fst
+imgui.ini
+# symlinks created by `make` so $readmemh can find the ROMs
+rom0.mem
+romb.mem
+romdf.mem
+rome.mem
+memdump_*.bin
+# inufuto tape images for the regression tape stage (not redistributed)
+tapes/

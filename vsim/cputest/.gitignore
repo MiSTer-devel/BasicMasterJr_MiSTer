@@ -1,0 +1,5 @@
+obj_dir/
+# Generated: cycles_6800.h comes from MAME's table via extract_cycles.py, and
+# m6800_pad_table.vh is the measured output that gets copied to ../../rtl/.
+cycles_6800.h
+m6800_pad_table.vh

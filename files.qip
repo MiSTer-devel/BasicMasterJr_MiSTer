@@ -1,0 +1,17 @@
+set_global_assignment -name VERILOG_FILE rtl/core.v
+set_global_assignment -name VERILOG_FILE rtl/keyboard.v
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/m6801.sv
+set_global_assignment -name VERILOG_FILE rtl/m6800_pad.v
+set_global_assignment -name VERILOG_FILE rtl/ram.v
+set_global_assignment -name VERILOG_FILE rtl/dpram.v
+set_global_assignment -name VERILOG_FILE rtl/rom.v
+set_global_assignment -name VERILOG_FILE rtl/video.v
+set_global_assignment -name VERILOG_FILE rtl/x74138.v
+set_global_assignment -name VERILOG_FILE rtl/cassette_recorder.v
+set_global_assignment -name VERILOG_FILE rtl/cassette.v
+set_global_assignment -name VERILOG_FILE rtl/tape_speed.v
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/tape_overlay.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram.sv
+set_global_assignment -name SYSTEMVERILOG_FILE BasicMasterJr.sv
+
+set_global_assignment -name SDC_FILE BasicMasterJr.sdc
