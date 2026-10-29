@@ -1,6 +1,6 @@
 # Basic Master Jr. tape list
 #
-# Copy this file to /media/fat/games/BasicMasterJr/boot1.rom. MiSTer loads it
+# This file lives at /media/fat/games/BasicMasterJr/boot1.rom. MiSTer loads it
 # when the core starts, so reload the core after editing it. It is plain text,
 # despite the name.
 #

@@ -14,8 +14,10 @@ and saving.
 
 ## Installation
 
+The MiSTer updater installs the core and the tape list. To install by hand:
+
 * Copy `releases/BasicMasterJr_*.rbf` to `/media/fat/_Computer/`.
-* Copy `games/BasicMasterJr/boot1.rom` (the tape list, below) to
+* Copy `releases/boot1.rom` (the tape list, below) to
   `/media/fat/games/BasicMasterJr/`.
 * Put tape images in `/media/fat/games/BasicMasterJr/`.
 
