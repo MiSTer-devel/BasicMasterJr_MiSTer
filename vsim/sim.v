@@ -18,6 +18,8 @@ module emu (
 
 	// PS/2 keyboard: [7:0] code, [8] extended, [9] pressed, [10] toggles per event
 	input      [10:0] ps2_key,
+	input      [11:0] joy,              // gamepad, as hps_io joystick_0[11:0]
+	input             us_layout,        // OSD Keyboard layout: US
 
 	// clk_sys ticks per tape bit; --tape-bit-period sweeps this from sim_main
 	input      [31:0] tape_bit_period,
@@ -146,12 +148,14 @@ always @(posedge clk_sys)
 
 assign dbg_cpu_ce = clk_cpu;
 
-wire core_reset = reset | ioctl_download;
+// As on the hardware top: a tape mount resets only the recorder, not the
+// machine (see BasicMasterJr.sv).
 
 //////////////////////////////  TAPE BUFFER  ///////////////////////////////////
 // Main sends the file's position in the row's extension list (BMT, BIN, SAV)
 // in ioctl_index[7:6] (menu.cpp), so a .bin arrives as $41: match the slot only.
 wire tape_ioctl = ioctl_index[5:0] == 6'd1;
+wire tape_reset = reset | (ioctl_download & tape_ioctl);
 // Match the hardware top: HPS downloads into a dedicated 64 KiB dual-port
 // block RAM, and the cassette reads its second port. There is no external
 // SDRAM handshake in the tape path, so downloads can accept one byte per tick.
@@ -167,7 +171,7 @@ wire        recorder_dirty;
 wire        recorder_overflow;
 
 cassette_recorder recorder (
-	.clk_sys(clk_sys), .reset(core_reset), .clear(1'b0), .saved(1'b0),
+	.clk_sys(clk_sys), .reset(tape_reset), .clear(1'b0), .saved(1'b0),
 	.cpu_tick(clk_cpu), .motor(tape_motor), .write_strobe(tape_write),
 	.buffer_wr(recorder_wr), .buffer_addr(recorder_addr),
 	.buffer_data(recorder_data), .size(recorder_size),
@@ -225,7 +229,7 @@ end
 cassette cassette (
 	.clk_sys     (clk_sys),
 	.bit_period  (turbo_bit_period),
-	.reset       (reset),           // NOT core_reset: a tape mount must not rewind twice
+	.reset       (reset),           // a tape mount rewinds; it must not also reset
 	.tape_start  (tape_start),
 	.tape_stop   (tape_stop),
 	.tape_rewind (tape_rewind),
@@ -243,7 +247,7 @@ cassette cassette (
 );
 
 core #(.VIDEO_BORDER(0), .SYS_CLK_HZ(SIM_CLK_HZ)) core (
-	.reset      (core_reset),
+	.reset      (reset),
 	.clk_sys    (clk_sys),
 	.clk_cpu    (clk_cpu),
 	.clk_vid    (clk_vid),
@@ -267,11 +271,16 @@ core #(.VIDEO_BORDER(0), .SYS_CLK_HZ(SIM_CLK_HZ)) core (
 	.dac_level  (dac_level)
 );
 
+wire  [95:0] pad_map;   // from tape_hint
+
 keyboard keyboard (
 	.reset  (reset),
 	.clk_sys(clk_sys),
 	.ps2_key(ps2_key),
 	.swap_alt_win(1'b0),   // OSD Swap Alt/Win keys; --send-keys can't type Win
+	.us_layout(us_layout),
+	.joy    (joy),
+	.pad_map(pad_map),
 	.kb_col (kb_col),
 	.kb_key (kb_key),
 	.kb_mod (kb_mod),
@@ -306,7 +315,8 @@ tape_hint tape_hint(
 	.show(tape_hint_show),
 	.len(tape_hint_len),
 	.two(tape_hint_two),
-	.text(tape_hint_text)
+	.text(tape_hint_text),
+	.pad_map(pad_map)
 );
 
 tape_status tape_status (

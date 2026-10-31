@@ -82,10 +82,12 @@ unsigned int key_hold_cycles = SIM_CLK_HZ * 30 / 1000; // 30 ms
 unsigned int tape_bit_period = SIM_CLK_HZ / 300;       // 300 baud
 bool fast_tape = true;
 bool tape_overlay = true;
+bool us_layout = false;   // --keyboard us: OSD Keyboard layout US, and type as on a US keyboard
 std::vector<int> rewind_frames;
 int  stop_at_frame      = -1;
 std::vector<int> screenshot_frames;
 std::string tape_image;
+int tape_at_frame = 0;            // --tape-at: mount the tape at this frame
 std::string tape_list;
 std::string record_output;
 std::vector<uint8_t> recorded_tape;
@@ -112,6 +114,14 @@ std::vector<unsigned> watch_pcs;
 std::vector<unsigned long long> watch_hits;
 
 struct KeyInjection { int frame; std::string keys; };
+
+// --pad N:BUTTONS -- hold gamepad buttons (joystick_0[11:0]) from frame N
+// until the next --pad. BUTTONS is names joined with '+', or empty to let go.
+struct PadEvent { int frame; unsigned buttons; };
+std::vector<PadEvent> pad_events;
+static const char* const pad_names[12] = {
+	"RIGHT", "LEFT", "DOWN", "UP", "A", "B", "X", "Y", "L", "R", "SELECT", "START"
+};
 std::vector<KeyInjection> key_injections;
 
 // ---------------------------------------------------------------------------
@@ -156,11 +166,64 @@ static void save_screenshot(int frame_number, const char* name = nullptr)
 // the key. Only the keys rtl/keyboard.v actually maps are listed -- anything
 // else is reported rather than silently dropped.
 // ---------------------------------------------------------------------------
-struct Ps2Map { unsigned int code; bool shift; };
+struct Ps2Map { unsigned int code; bool shift; bool ext; };
+
+// --send-keys escapes \U \D \L \R: the arrow keys (E0 75 / 72 / 6B / 74).
+enum { ARROW_UP = 0x11, ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT };
+
+// What a US keyboard presses for c, for --keyboard us. Letters and digits
+// are as in ascii_to_ps2; the punctuation is on the US keys.
+static Ps2Map ascii_to_ps2_us(char c)
+{
+	Ps2Map m = { 0xFF, false, false };
+	switch (c) {
+		case '`':  m.code = 0x0e; break;
+		case '-':  m.code = 0x4e; break;
+		case '=':  m.code = 0x55; break;
+		case '[':  m.code = 0x54; break;
+		case ']':  m.code = 0x5b; break;
+		case '\\': m.code = 0x5d; break;
+		case ';':  m.code = 0x4c; break;
+		case '\'': m.code = 0x52; break;
+		case ',':  m.code = 0x41; break;
+		case '.':  m.code = 0x49; break;
+		case '/':  m.code = 0x4a; break;
+		case '!':  m.code = 0x16; m.shift = true; break;
+		case '@':  m.code = 0x1e; m.shift = true; break;
+		case '#':  m.code = 0x26; m.shift = true; break;
+		case '$':  m.code = 0x25; m.shift = true; break;
+		case '%':  m.code = 0x2e; m.shift = true; break;
+		case '^':  m.code = 0x36; m.shift = true; break;
+		case '&':  m.code = 0x3d; m.shift = true; break;
+		case '*':  m.code = 0x3e; m.shift = true; break;
+		case '(':  m.code = 0x46; m.shift = true; break;
+		case ')':  m.code = 0x45; m.shift = true; break;
+		case '_':  m.code = 0x4e; m.shift = true; break;
+		case '+':  m.code = 0x55; m.shift = true; break;
+		case ':':  m.code = 0x4c; m.shift = true; break;
+		case '"':  m.code = 0x52; m.shift = true; break;
+		case '<':  m.code = 0x41; m.shift = true; break;
+		case '>':  m.code = 0x49; m.shift = true; break;
+		case '?':  m.code = 0x4a; m.shift = true; break;
+		default: break;
+	}
+	return m;
+}
 
 static Ps2Map ascii_to_ps2(char c)
 {
-	Ps2Map m = { 0xFF, false };
+	Ps2Map m = { 0xFF, false, false };
+
+	switch (c) {
+		case ARROW_UP:    m.code = 0x75; m.ext = true; return m;
+		case ARROW_DOWN:  m.code = 0x72; m.ext = true; return m;
+		case ARROW_LEFT:  m.code = 0x6b; m.ext = true; return m;
+		case ARROW_RIGHT: m.code = 0x74; m.ext = true; return m;
+	}
+	if (us_layout) {
+		Ps2Map u = ascii_to_ps2_us(c);
+		if (u.code != 0xFF) return u;
+	}
 
 	if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
 
@@ -187,11 +250,12 @@ static Ps2Map ascii_to_ps2(char c)
 		case ';':  m.code = 0x4c; break;
 		case ':':  m.code = 0x52; break;
 		case '-':  m.code = 0x4e; break;
-		case '_':  m.code = 0x0e; break;
-		case ']':  m.code = 0x5b; break;
-		case '@':  m.code = 0x75; break;   // @ / cursor up
-		case '[':  m.code = 0x72; break;   // [ / cursor down
-		case '^':  m.code = 0x74; break;   // ^ / cursor right
+		case '_':  m.code = 0x51; m.shift = true; break;   // the JIS keys, as in rtl/keyboard.v
+		case ']':  m.code = 0x5d; break;
+		case '@':  m.code = 0x54; break;
+		case '[':  m.code = 0x5b; break;
+		case '^':  m.code = 0x55; break;
+		case '\\': m.code = 0x6a; break;   // yen
 		// shifted second functions of the keys above
 		case '+':  m.code = 0x4c; m.shift = true; break;
 		case '*':  m.code = 0x52; m.shift = true; break;
@@ -223,8 +287,8 @@ static void queue_key_string(const std::string& keys)
 			continue;
 		}
 		if (m.shift) input.keyEvents.push(SimInput_PS2KeyEvent(SHIFT, true, false, SHIFT));
-		input.keyEvents.push(SimInput_PS2KeyEvent(m.code, true,  false, m.code));
-		input.keyEvents.push(SimInput_PS2KeyEvent(m.code, false, false, m.code));
+		input.keyEvents.push(SimInput_PS2KeyEvent(m.code, true,  m.ext, m.code));
+		input.keyEvents.push(SimInput_PS2KeyEvent(m.code, false, m.ext, m.code));
 		if (m.shift) input.keyEvents.push(SimInput_PS2KeyEvent(SHIFT, false, false, SHIFT));
 	}
 }
@@ -242,6 +306,10 @@ static std::string unescape(const std::string& in)
 			case 't': out += '\t'; break;
 			case 'b': out += '\b'; break;
 			case '\\': out += '\\'; break;
+			case 'U': out += (char)ARROW_UP; break;
+			case 'D': out += (char)ARROW_DOWN; break;
+			case 'L': out += (char)ARROW_LEFT; break;
+			case 'R': out += (char)ARROW_RIGHT; break;
 			case 'x': {
 				if (i + 2 < in.size()) {
 					out += (char)strtol(in.substr(i + 1, 2).c_str(), nullptr, 16);
@@ -403,8 +471,8 @@ static int verilate()
 	// Power-on reset only. Deliberately NOT extended across an ioctl download:
 	// sim.v feeds `reset` to the SDRAM controller's `init`, and holding that
 	// high through a transfer throws the whole image away (which is exactly the
-	// bug the real BasicMasterJr.sv had). sim.v ORs ioctl_download into the
-	// core's own reset, matching hardware.
+	// bug the real BasicMasterJr.sv had). A tape download resets only the
+	// recorder in sim.v, as on the hardware: the machine keeps running.
 	if (main_time < INITIAL_RESET_TICKS) {
 		top->reset = 1;
 		reset_ticks = main_time;
@@ -505,9 +573,26 @@ static void save_recorded_tape()
 	       record_output.c_str(), recorded_tape.size());
 }
 
+static void queue_tape()
+{
+	// Like Main (menu.cpp), put the extension's position in the OSD row's
+	// list ("FS1,BMTBINSAV") in bits 7:6 of the index: .bin arrives as $41.
+	std::string ext = tape_image.substr(tape_image.find_last_of('.') + 1);
+	for (auto& c : ext) c = toupper(c);
+	int ext_idx = ext == "BIN" ? 1 : ext == "SAV" ? 2 : 0;
+	printf("Loading tape image: %s (ioctl_index $%02X)\n", tape_image.c_str(), (ext_idx << 6) | 1);
+	bus.QueueDownload(tape_image, (ext_idx << 6) | 1, 1);
+}
+
 static bool frame_actions(int frame)
 {
+	if (tape_at_frame && frame == tape_at_frame) queue_tape();
 	if (!key_injections.empty()) process_key_injections(frame);
+	for (const PadEvent& e : pad_events)
+		if (e.frame == frame) {
+			top->joy = e.buttons;
+			if (trace_key) printf("[pad] buttons=%03X frame=%d\n", e.buttons, frame);
+		}
 	// OSD Rewind tape: hold the button for one frame.
 	top->tape_rewind_btn = std::find(rewind_frames.begin(), rewind_frames.end(), frame) != rewind_frames.end();
 
@@ -548,6 +633,7 @@ static void usage(const char* argv0)
 	"\n"
 	"  --headless                 run without a window (still renders for screenshots)\n"
 	"  --tape <file>              load a tape image over ioctl (index 1)\n"
+	"  --tape-at N                mount the --tape image at frame N instead of at start\n"
 	"  --tape-list <file>         load a tape list (boot1.rom) over ioctl (index $40)\n"
 	"  --record-out <file>        save bytes produced through $EE80 tape output\n"
 	"  --screenshot N[,N,...]     write screenshot_frame_NNNN.png at these frames\n"
@@ -555,8 +641,14 @@ static void usage(const char* argv0)
 	"  --stop-at-frame N          exit once frame N has been reached\n"
 	"  --dump-mem ADDR:LEN@FRAME  snapshot RAM to memdump_*.bin (hex addr and len)\n"
 	"  --poke ADDR=BYTES@FRAME    write RAM directly; BYTES is hex, FFx256 repeats\n"
-	"  --send-keys N:string       type `string` at frame N (\\n = Return, \\xNN = raw)\n"
+	"  --send-keys N:string       type `string` at frame N (\\n = Return, \\xNN = raw,\n"
+	"                             \\U \\D \\L \\R = arrow keys)\n"
 	"                             repeatable\n"
+	"  --keyboard jis|us          OSD Keyboard layout (default jis); us also types\n"
+	"                             --send-keys as on a US keyboard\n"
+	"  --pad N:BUTTONS            hold gamepad buttons from frame N, e.g. 300:A+UP;\n"
+	"                             300: lets go. Buttons: RIGHT LEFT DOWN UP A B X Y\n"
+	"                             L R SELECT START. Repeatable\n"
 	"  --trace-cpu                print every CPU bus cycle (very verbose)\n"
 	"  --trace-io                 print accesses to $E800-$EFFF\n"
 	"  --trace-tape               print cassette state machine transitions\n"
@@ -617,6 +709,7 @@ int main(int argc, char** argv, char** env)
 			}
 		}
 		else if (a == "--tape")              tape_image = next("--tape");
+		else if (a == "--tape-at")           tape_at_frame = atoi(next("--tape-at").c_str());
 		else if (a == "--tape-list")         tape_list = next("--tape-list");
 		else if (a == "--record-out")         record_output = next("--record-out");
 		else if (a == "--screenshot-name")   screenshot_name = next("--screenshot-name");
@@ -641,6 +734,30 @@ int main(int argc, char** argv, char** env)
 				return 1;
 			}
 			mem_dumps.push_back({ frame, addr, len });
+		}
+		else if (a == "--keyboard") {
+			std::string value = next("--keyboard");
+			if      (value == "jis") us_layout = false;
+			else if (value == "us")  us_layout = true;
+			else { printf("--keyboard wants jis or us\n"); return 1; }
+		}
+		else if (a == "--pad") {
+			std::string spec = next("--pad");
+			size_t colon = spec.find(':');
+			if (colon == std::string::npos) { printf("--pad wants N:BUTTONS, e.g. 300:A+UP\n"); return 1; }
+			PadEvent e = { atoi(spec.substr(0, colon).c_str()), 0 };
+			std::string list = spec.substr(colon + 1);
+			for (size_t pos = 0; pos < list.size();) {
+				size_t plus = list.find('+', pos);
+				std::string tok = list.substr(pos, plus == std::string::npos ? std::string::npos : plus - pos);
+				int b = 0;
+				while (b < 12 && tok != pad_names[b]) b++;
+				if (b == 12) { printf("--pad: unknown button '%s'\n", tok.c_str()); return 1; }
+				e.buttons |= 1u << b;
+				if (plus == std::string::npos) break;
+				pos = plus + 1;
+			}
+			pad_events.push_back(e);
 		}
 		else if (a == "--poke") {
 			std::string spec = next("--poke");
@@ -709,6 +826,8 @@ int main(int argc, char** argv, char** env)
 	top->fast_tape = fast_tape;
 	top->tape_overlay = tape_overlay;
 	top->tape_rewind_btn = 0;
+	top->joy = 0;
+	top->us_layout = us_layout;
 
 	// Main loads boot1.rom at core start, before any tape is mounted.
 	if (!tape_list.empty()) {
@@ -716,15 +835,7 @@ int main(int argc, char** argv, char** env)
 		bus.QueueDownload(tape_list, 0x40, 1);
 	}
 
-	if (!tape_image.empty()) {
-		// Like Main (menu.cpp), put the extension's position in the OSD row's
-		// list ("FS1,BMTBINSAV") in bits 7:6 of the index: .bin arrives as $41.
-		std::string ext = tape_image.substr(tape_image.find_last_of('.') + 1);
-		for (auto& c : ext) c = toupper(c);
-		int ext_idx = ext == "BIN" ? 1 : ext == "SAV" ? 2 : 0;
-		printf("Loading tape image: %s (ioctl_index $%02X)\n", tape_image.c_str(), (ext_idx << 6) | 1);
-		bus.QueueDownload(tape_image, (ext_idx << 6) | 1, 1);
-	}
+	if (!tape_image.empty() && tape_at_frame == 0) queue_tape();
 
 	if (!headless) {
 		input.Initialise();

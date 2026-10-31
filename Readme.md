@@ -7,9 +7,9 @@ also has the MP-1710 colour adapter.
 The BASIC, monitor and character ROMs are built in, so you don't need any BIOS
 files. Power on and you are at the BASIC prompt.
 
-**Working:** BASIC and the monitor, keyboard, sound, timer and BREAK
-interrupts, the graphics modes, MP-1710 colour and border, and tape loading
-and saving.
+**Working:** BASIC and the monitor, keyboard (JIS or US layout), gamepad,
+sound, timer and BREAK interrupts, the graphics modes, MP-1710 colour and
+border, and tape loading and saving.
 **Not implemented:** printer, expansion cards (MP-9730, MP-1803 floppy).
 
 ## Installation
@@ -32,6 +32,7 @@ The MiSTer updater installs the core and the tape list. To install by hand:
 | Scandoubler Fx | None, HQ2x, CRT 25/50/75% | |
 | Aspect ratio | Original, Full Screen, ARC1, ARC2 | |
 | Tape overlay | **On**, Off | Tape status and a what-to-type hint |
+| Keyboard layout | **JIS**, US | JIS: keys by position. US: keys type their legend (see below) |
 | Swap Alt/Win keys | **No**, Yes | Moves カナ記号 from Alt to Win |
 | Reset and close OSD | | |
 
@@ -55,6 +56,9 @@ TYPE LOAD GORILA ↵          a BASIC program; then RUN ↵
   `CALL $E37E` before `LOAD`. It moves the program out of the graphics
   memory. Going back from the monitor to BASIC (`E` Return) undoes it,
   so type it after `E`. The hint shows this when it applies.
+* **Changing tapes:** mounting a tape doesn't reset the machine, as swapping
+  a cassette wouldn't. What you typed or loaded before stays, so `CALL $E37E`
+  can come before the mount, and a program can load from more than one tape.
 
 While the tape plays, the corner shows elapsed time, total time and a progress
 bar. At 32x a 15 KB game loads in about 10 seconds. Normal is the real
@@ -81,9 +85,9 @@ note under the start hint. MiSTer loads it when the core starts. One line
 per program, and `#` starts a comment:
 
 ```
-# NAME  LOAD  START  [END]  [| NOTE]
-CAR     2000  2500          | S GO NM STEER CTRL GAS
-GORILA  -     -             | S START
+# NAME  LOAD  START  [END]  [| NOTE  [| PAD MAP]]
+CAR     2000  2500          | S GO NM STEER CTRL GAS  | START=S LEFT=N RIGHT=M A=CTRL
+GORILA  -     -             | S START                 | START=S
 ```
 
 * `NAME` is the name in the tape header, as `L` or `LOAD` prints it.
@@ -92,6 +96,8 @@ GORILA  -     -             | S START
 * `END` is optional: the last address the file loads, to match one
   version only.
 * The note can be up to 22 characters, upper case.
+* The pad map is optional (see [Gamepad](#gamepad)). For a map without a
+  note, leave the note empty: `NAME - - | | A=Z`.
 
 For a tape with machine code followed by BASIC, the line is for the BASIC
 program. The file's own comments explain the format, so you can add your
@@ -109,11 +115,22 @@ name for each recording, because a shorter recording doesn't shrink an existing 
 
 ## Keyboard
 
-| PC | Basic Master Jr. |
+**Keyboard layout** in the OSD picks how PC keys map to the machine's keys.
+
+* **JIS** (default): by position, as on a Japanese keyboard, which is also
+  the machine's own layout: `@` `[` `]` `^` `¥` and `ろ` (`_` with Shift)
+  are where a JIS keyboard has them. Type in lower case (Shift+letter isn't
+  a capital). On a US keyboard the punctuation is in the wrong places and
+  `¥` and `_` are missing, so use US.
+* **US**: each key types what is printed on it. Shift+2 is `@`, `'` is `'`,
+  Shift+letter is the same letter (the machine only has capitals), `\` is
+  `¥`. `` ` `` `~` `{` `}` `|` have no key on the machine and type nothing.
+
+In both layouts the arrows move the cursor (on the machine they are Shift
+with `@` `[` `^` `¥`) and the keypad types digits.
+
+| PC | Basic Master Jr. (both layouts) |
 |---|---|
-| Letters, digits, punctuation | JIS layout. Type in lower case (Shift+letter isn't a capital) |
-| ↑ ↓ → | `@` `[` `^` (cursor keys) |
-| ← / ¥ | `¥` (left) |
 | Caps Lock (hold) | カナ |
 | Alt (hold) | カナ記号 (Win with Swap Alt/Win) |
 | Left Ctrl | 英数 |
@@ -121,6 +138,31 @@ name for each recording, because a shorter recording doesn't shrink an existing 
 
 The ROM and most games scan the keyboard slowly, so hold keys a moment
 instead of tapping them.
+
+## Gamepad
+
+Gamepad buttons type keys. By default the d-pad is the cursor keys, A is
+Space and B is Return. If the tape list's line for the mounted program has a
+pad map, its buttons type what it says instead:
+
+```
+UP=I DOWN=M LEFT=J RIGHT=K A=Z START=S
+```
+
+* Buttons: `UP` `DOWN` `LEFT` `RIGHT` `A` `B` `X` `Y` `L` `R` `SELECT`
+  `START`. A button the map doesn't name keeps its default.
+* Keys: a single character, as typed on the JIS layout (`!` to `?` add
+  Shift), or `SPACE` `RETURN` `BS` `UP` `DOWN` `LEFT` `RIGHT` `CTRL` `SHIFT`
+  `ALT` `CAPS` `ESC` `NONE`, named as on the PC keyboard (`CTRL` is 英数,
+  `ALT` カナ記号, `CAPS` カナ, `ESC` BREAK). `UP` `DOWN` `LEFT` `RIGHT` move
+  the cursor (Shift with `@` `[` `^` `¥`). `NONE` turns a button off.
+
+The map is for the program the start hint is about, so it applies from the
+time the tape is mounted. The supplied list maps every game we have: the
+inufuto games, zu2's programs and the magazine type-ins. In it, START is
+the key that starts a game and SELECT the one that answers Y to play again.
+The keys were taken from each program's own code (its `INKEY$` tests, or the
+keyboard reads in its machine code), not just from the instructions.
 
 ## Building
 

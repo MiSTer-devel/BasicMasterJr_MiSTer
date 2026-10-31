@@ -79,12 +79,20 @@ localparam CONF_STR = {
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	"O[125],Tape overlay,On,Off;",
 	"-;",
+	// JIS: keys by position, as on a Japanese keyboard. US: keys type their
+	// legend, and the arrows move the cursor (keyboard.v).
+	"O[123],Keyboard layout,JIS,US;",
 	"O[127],Swap Alt/Win keys,No,Yes;",
 	"-;",
 	"R[0],Reset and close OSD;",
 	// I, lines are not drawn, but Main's Enter handler counts them as rows
 	// (menu.cpp), so one above a button makes Enter on that button do nothing.
 	"I,Tape ready (rewound);",
+	// Gamepad buttons type keys: the tape list's pad map for the loaded
+	// program, else cursor keys, Space and Return (tape_hint). The J lines
+	// must come after every menu row; Main counts them as rows otherwise.
+	"J1,A,B,X,Y,L,R,Select,Start;",
+	"jn,A,B,X,Y,L,R,Select,Start;",
 	"V,v",`BUILD_DATE
 };
 
@@ -93,6 +101,7 @@ wire [21:0] gamma_bus;
 wire   [1:0] buttons;
 wire [127:0] status;
 wire  [10:0] ps2_key;
+wire  [31:0] joystick_0;
 
 wire [24:0] ioctl_addr;
 wire  [7:0] ioctl_dout;
@@ -127,6 +136,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.status_menumask(16'd0),
 
 	.ps2_key(ps2_key),
+	.joystick_0(joystick_0),
 	.info_req(tape_info_req),
 	.info(8'd1),
 
@@ -195,7 +205,18 @@ wire clk_cpu = cpu_sum[32];
 always @(posedge clk_sys)
   cpu_acc <= cpu_sum[31:0];
 
-wire reset = RESET | status[0] | buttons[1] | ioctl_download;
+wire reset = RESET | status[0] | buttons[1];
+
+// Main sends the file's position in the row's extension list (BMT, BIN, SAV)
+// in ioctl_index[7:6] (menu.cpp), so a .bin arrives as $41: match the slot only.
+wire tape_ioctl = ioctl_index[5:0] == 6'd1;
+
+// Mounting a tape is like swapping the cassette: the machine keeps running,
+// so a CALL $E37E typed before the mount, or a program loaded from another
+// tape, survives it. Only the recorder (and its save flush), which share the
+// tape buffer with the download, start over. The player keeps its motor
+// state and rewinds when the download ends.
+wire tape_reset = reset | (ioctl_download & tape_ioctl);
 
 // The SDRAM controller must NOT be re-initialised while a tape image is being
 // written into it: `init` forces its state machine back to STATE_STARTUP every
@@ -227,10 +248,6 @@ wire tape_out;
 // the edge-triggered external SDRAM handshake and byte-lane hazards.
 assign ioctl_wait = 1'b0;
 
-// Main sends the file's position in the row's extension list (BMT, BIN, SAV)
-// in ioctl_index[7:6] (menu.cpp), so a .bin arrives as $41: match the slot only.
-wire tape_ioctl = ioctl_index[5:0] == 6'd1;
-
 // Latch how many bytes the tape image holds, so the player knows where the
 // tape ends instead of wrapping through stale buffer data. Rewind whenever a
 // new image is mounted (and say so: "Tape ready (rewound)") or on OSD Rewind
@@ -254,7 +271,7 @@ reg         recorder_saved = 1'b0;
 
 cassette_recorder recorder (
   .clk_sys(clk_sys),
-  .reset(reset),
+  .reset(tape_reset),
   .clear(status[119]),
   .saved(recorder_saved),
   .cpu_tick(clk_cpu),
@@ -314,7 +331,7 @@ always @(posedge clk_sys) begin
   if (img_mounted)
     save_mounted <= ~img_readonly;
 
-  if (reset) begin
+  if (tape_reset) begin
     sd_wr <= 1'b0;
     flush_state <= FLUSH_IDLE;
   end
@@ -440,11 +457,16 @@ core core(
   .dac_level(dac_level)
 );
 
+wire  [95:0] pad_map;   // from tape_hint
+
 keyboard keyboard(
   .reset(reset),
   .clk_sys(clk_sys),
   .ps2_key(ps2_key),
   .swap_alt_win(status[127]),
+  .us_layout(status[123]),
+  .joy(joystick_0[11:0]),
+  .pad_map(pad_map),
   .kb_col(kb_col),
   .kb_key(kb_key),
   .kb_mod(kb_mod),
@@ -489,7 +511,8 @@ tape_hint tape_hint(
   .show(tape_hint_show),
   .len(tape_hint_len),
   .two(tape_hint_two),
-  .text(tape_hint_text)
+  .text(tape_hint_text),
+  .pad_map(pad_map)
 );
 
 tape_status tape_status(

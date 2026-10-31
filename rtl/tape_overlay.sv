@@ -58,7 +58,7 @@
 // text file, one line per program:
 //
 //   # comment
-//   NAME  LOAD  START  [END]  [| note]
+//   NAME  LOAD  START  [END]  [| note  [| pad map]]
 //   CAR   2000  2500          | S START  N M STEER
 //
 // NAME is the tape's 6-character name, LOAD and END the first and last
@@ -68,6 +68,14 @@
 // line. The line for the file the start hint is about (B if there is one,
 // else A) is looked up by scanning the text whenever that file changes; the
 // first matching line wins.
+//
+// The pad map, after a second '|', is BUTTON=KEY words: buttons UP DOWN LEFT
+// RIGHT A B X Y L R SELECT START, keys a single character (Shift added for
+// the shifted ones, ! to ?) or SPACE RETURN BS UP DOWN LEFT RIGHT CTRL SHIFT
+// ALT CAPS ESC NONE, named as on the PC keyboard; UP DOWN LEFT RIGHT move the
+// cursor (Shift with @ [ ^ yen). Buttons it doesn't name keep the default:
+// the d-pad is the cursor keys, A Space and B Return. pad_map goes to
+// keyboard.v, one byte per joystick bit.
 
 module tape_hint (
   input  logic         clk,
@@ -85,7 +93,8 @@ module tape_hint (
   output logic         show,
   output logic   [4:0] len,         // width of the wider line
   output logic         two,         // a second line (CALL $E37E, or a note)
-  output logic [351:0] text         // 2 x 22 characters, the first in [351:344]
+  output logic [351:0] text,        // 2 x 22 characters, the first in [351:344]
+  output logic  [95:0] pad_map      // gamepad button -> key, see keyboard.v
 );
   localparam logic [1:0] P_SEEK = 2'd0, P_HDR = 2'd1, P_SKIP = 2'd2;
   localparam int SLOTS = 101;
@@ -210,7 +219,7 @@ module tape_hint (
   end
 
   // Scanner: rescans whenever the key or the list changes.
-  localparam logic [1:0] L_FIELDS = 2'd0, L_NOTE = 2'd1, L_SKIP = 2'd2;
+  localparam logic [1:0] L_FIELDS = 2'd0, L_NOTE = 2'd1, L_SKIP = 2'd2, L_PAD = 2'd3;
   wire [95:0] key = {list_len, r_name, r_addr, r_end, a_valid, b_valid};
   logic [95:0] last_key;
   logic        busy, rdv;
@@ -221,17 +230,24 @@ module tape_hint (
   logic [15:0] lload, lstart, lend;
   logic [175:0] lnote;
   logic [4:0]  ncount, nlast;
+  // Pad map: the word being read (button, then key after '='), and the map.
+  logic        pkey, pbad;
+  logic [2:0]  pcnt;
+  logic [47:0] pbtn, pk;
+  logic [95:0] lpad, lpad_t;
   // The match.
   logic        found, f_keep;
   logic [15:0] f_start;
   logic [175:0] f_note;
   logic [4:0]  f_nlen;
+  logic [95:0] f_pad;
 
   initial begin
     last_key = 0; busy = 0; rdv = 0; s_addr = 0; lstate = L_FIELDS;
     fcnt = 0; ncnt = 0; infield = 0; lbad = 0; load_any = 0; start_keep = 0;
     lname = {6{8'h20}}; lload = 0; lstart = 0; lend = 0; lnote = 0; ncount = 0; nlast = 0;
     found = 0; f_keep = 0; f_start = 0; f_note = 0; f_nlen = 0;
+    pkey = 0; pbad = 0; pcnt = 0; pbtn = {6{8'h20}}; pk = {6{8'h20}}; lpad = 0; f_pad = 0;
   end
 
   function automatic logic [4:0] hexval(input logic [7:0] c);
@@ -239,6 +255,85 @@ module tape_hint (
     if (c >= "A" && c <= "F") return {1'b1, 4'(c - "A" + 8'd10)};
     return 5'd0;
   endfunction
+
+  // Button word -> joystick bit (hps_io: right, left, down, up, then J1's
+  // A B X Y L R Select Start).
+  function automatic logic [4:0] button(input logic [47:0] w);
+    case (w)
+      "RIGHT ": return 5'h10;
+      "LEFT  ": return 5'h11;
+      "DOWN  ": return 5'h12;
+      "UP    ": return 5'h13;
+      "A     ": return 5'h14;
+      "B     ": return 5'h15;
+      "X     ": return 5'h16;
+      "Y     ": return 5'h17;
+      "L     ": return 5'h18;
+      "R     ": return 5'h19;
+      "SELECT": return 5'h1A;
+      "START ": return 5'h1B;
+      default:  return 5'h00;
+    endcase
+  endfunction
+
+  // Key word -> pad_map byte: {mapped, Shift, column, row}, the matrix
+  // position as in keyboard.v.
+  function automatic logic [7:0] k(input logic [3:0] col, input logic [1:0] row, input logic sh);
+    return {1'b1, sh, col, row};
+  endfunction
+  function automatic logic [7:0] keycode(input logic [47:0] w);
+    if (w[39:0] == {5{8'h20}}) case (w[47:40])
+      "Z": return k(0, 0, 0);  "A": return k(0, 1, 0);  "Q": return k(0, 2, 0);  "1": return k(0, 3, 0);
+      "X": return k(1, 0, 0);  "S": return k(1, 1, 0);  "W": return k(1, 2, 0);  "2": return k(1, 3, 0);
+      "C": return k(2, 0, 0);  "D": return k(2, 1, 0);  "E": return k(2, 2, 0);  "3": return k(2, 3, 0);
+      "V": return k(3, 0, 0);  "F": return k(3, 1, 0);  "R": return k(3, 2, 0);  "4": return k(3, 3, 0);
+      "B": return k(4, 0, 0);  "G": return k(4, 1, 0);  "T": return k(4, 2, 0);  "5": return k(4, 3, 0);
+      "N": return k(5, 0, 0);  "H": return k(5, 1, 0);  "Y": return k(5, 2, 0);  "6": return k(5, 3, 0);
+      "M": return k(6, 0, 0);  "J": return k(6, 1, 0);  "U": return k(6, 2, 0);  "7": return k(6, 3, 0);
+      ",": return k(7, 0, 0);  "K": return k(7, 1, 0);  "I": return k(7, 2, 0);  "8": return k(7, 3, 0);
+      ".": return k(8, 0, 0);  "L": return k(8, 1, 0);  "O": return k(8, 2, 0);  "9": return k(8, 3, 0);
+      "/": return k(9, 0, 0);  ";": return k(9, 1, 0);  "P": return k(9, 2, 0);  "0": return k(9, 3, 0);
+      "_": return k(10, 0, 0); ":": return k(10, 1, 0); "@": return k(10, 2, 0); "-": return k(10, 3, 0);
+      // 8'h5C is \ (the yen key), 8'h22 is ": Quartus 17 can't parse either
+      // escaped in a string.
+      "]": return k(11, 1, 0); "[": return k(11, 2, 0); "^": return k(11, 3, 0); 8'h5C: return k(12, 3, 0);
+      "!": return k(0, 3, 1);  8'h22: return k(1, 3, 1); "#": return k(2, 3, 1);
+      "$": return k(3, 3, 1);  "%": return k(4, 3, 1);  "&": return k(5, 3, 1);
+      "'": return k(6, 3, 1);  "(": return k(7, 3, 1);  ")": return k(8, 3, 1);
+      "<": return k(7, 0, 1);  ">": return k(8, 0, 1);  "?": return k(9, 0, 1);
+      "+": return k(9, 1, 1);  "*": return k(10, 1, 1); "=": return k(10, 3, 1);
+      default: return 8'd0;
+    endcase
+    case (w)
+      "SPACE ": return k(11, 0, 0);
+      "RETURN": return k(12, 1, 0);
+      "BS    ": return k(12, 2, 0);
+      // The cursor keys are Shift with @ [ ^ yen (the ROM's Shift table).
+      "UP    ": return k(10, 2, 1);
+      "DOWN  ": return k(11, 2, 1);
+      "RIGHT ": return k(11, 3, 1);
+      "LEFT  ": return k(12, 3, 1);
+      "CTRL  ": return k(13, 0, 0);
+      "SHIFT ": return k(13, 1, 0);
+      "ALT   ": return k(13, 2, 0);
+      "CAPS  ": return k(13, 3, 0);
+      "ESC   ": return k(14, 0, 0);
+      "NONE  ": return k(15, 0, 0);
+      default:  return 8'd0;
+    endcase
+  endfunction
+
+  // Unnamed buttons: d-pad = cursor keys, A = Space, B = Return.
+  wire [95:0] pad_default = {48'd0, k(12, 1, 0), k(11, 0, 0),
+                               k(10, 2, 1), k(11, 2, 1), k(12, 3, 1), k(11, 3, 1)};
+
+  // The map with the word just read added (at the blank or newline after it).
+  wire [4:0] pb = button(pbtn);
+  wire [7:0] pc = keycode(pk);
+  always_comb begin
+    lpad_t = lpad;
+    if (pkey && !pbad && pb[4] && pc[7]) lpad_t[8 * pb[3:0] +: 8] = pc;
+  end
 
   wire        eof = busy && !rdv && s_addr >= list_len;
   wire        lgo = rdv || eof;                  // a character to scan
@@ -257,6 +352,7 @@ module tape_hint (
       busy <= a_valid; s_addr <= 0; found <= 0;
       lstate <= L_FIELDS; fcnt <= 0; ncnt <= 0; infield <= 0; lbad <= 0;
       load_any <= 0; start_keep <= 0; lname <= {6{8'h20}}; ncount <= 0; nlast <= 0; lnote <= {22{8'h20}};
+      pkey <= 0; pbad <= 0; pcnt <= 0; pbtn <= {6{8'h20}}; pk <= {6{8'h20}}; lpad <= 0;
     end else if (busy) begin
       if (s_addr < list_len) begin s_addr <= s_addr + 1'd1; rdv <= 1; end
       if (eof) busy <= 0;
@@ -264,10 +360,11 @@ module tape_hint (
         if (c == 8'h0A) begin
           if (lstate != L_SKIP && match && !found) begin
             found <= 1; f_keep <= start_keep; f_start <= lstart;
-            f_note <= lnote; f_nlen <= nlast;
+            f_note <= lnote; f_nlen <= nlast; f_pad <= lpad_t;
           end
           lstate <= L_FIELDS; fcnt <= 0; ncnt <= 0; infield <= 0; lbad <= 0;
           load_any <= 0; start_keep <= 0; lname <= {6{8'h20}}; ncount <= 0; nlast <= 0; lnote <= {22{8'h20}};
+          pkey <= 0; pbad <= 0; pcnt <= 0; pbtn <= {6{8'h20}}; pk <= {6{8'h20}}; lpad <= 0;
         end else case (lstate)
           L_FIELDS:
             if (ws) infield <= 0;
@@ -287,11 +384,25 @@ module tape_hint (
           L_NOTE:
             // Printable ASCII only (the machine's ROM has no lower case or
             // UTF-8); leading blanks dropped, trailing ones not counted.
-            if (c != 8'h0D && (ncount != 5'd0 || !ws) && ncount < 5'd22 &&
+            if (c == "|") lstate <= L_PAD;
+            else if (c != 8'h0D && (ncount != 5'd0 || !ws) && ncount < 5'd22 &&
                 c >= 8'h09 && c < 8'h7F && (c >= 8'h20 || c == 8'h09)) begin
               lnote[175 - 8 * ncount -: 8] <= c == 8'h09 ? 8'h20 : uc;
               ncount <= ncount + 5'd1;
               if (!ws) nlast <= ncount + 5'd1;
+            end
+          L_PAD:
+            // Words of BUTTON=KEY; one that doesn't parse is ignored.
+            if (ws) begin
+              lpad <= lpad_t;
+              pkey <= 0; pbad <= 0; pcnt <= 0; pbtn <= {6{8'h20}}; pk <= {6{8'h20}};
+            end else if (c == "=" && !pkey) begin
+              pkey <= 1; pcnt <= 0;
+            end else if (pcnt == 3'd6) pbad <= 1;
+            else begin
+              if (pkey) pk[47 - 8 * pcnt -: 8] <= uc;
+              else      pbtn[47 - 8 * pcnt -: 8] <= uc;
+              pcnt <= pcnt + 3'd1;
             end
           default: ;
         endcase
@@ -315,6 +426,10 @@ module tape_hint (
   wire [15:0] g_addr  = known && !f_keep ? f_start : r_addr;
   wire        unsure  = run_bin && !known && !plausible(r_first);
   wire [4:0]  note_n  = known ? f_nlen : 5'd0;
+
+  always_comb
+    for (int i = 0; i < 12; i++)
+      pad_map[8 * i +: 8] = known && f_pad[8 * i + 7] ? f_pad[8 * i +: 8] : pad_default[8 * i +: 8];
 
   // Which hint, if any.
   wire at_start = position == 25'd0;
