@@ -83,6 +83,10 @@ localparam CONF_STR = {
 	// legend, and the arrows move the cursor (keyboard.v).
 	"O[123],Keyboard layout,JIS,US;",
 	"O[127],Swap Alt/Win keys,No,Yes;",
+	// The real machine had no joystick port; the gamepad only types keys
+	// (keyboard.v), so Off just ignores it. [114] rather than the unused
+	// [118], which old configs may still have set.
+	"O[114],Gamepad to keys,On,Off;",
 	"-;",
 	"R[0],Reset and close OSD;",
 	// I, lines are not drawn, but Main's Enter handler counts them as rows
@@ -465,7 +469,7 @@ keyboard keyboard(
   .ps2_key(ps2_key),
   .swap_alt_win(status[127]),
   .us_layout(status[123]),
-  .joy(joystick_0[11:0]),
+  .joy(status[114] ? 12'd0 : joystick_0[11:0]),
   .pad_map(pad_map),
   .kb_col(kb_col),
   .kb_key(kb_key),

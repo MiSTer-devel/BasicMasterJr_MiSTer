@@ -7,7 +7,8 @@ also has the MP-1710 colour adapter.
 The BASIC, monitor and character ROMs are built in, so you don't need any BIOS
 files. Power on and you are at the BASIC prompt.
 
-**Working:** BASIC and the monitor, keyboard (JIS or US layout), gamepad,
+**Working:** BASIC and the monitor, keyboard (JIS or US layout), gamepad
+(as keys; the machine had no joystick port),
 sound, timer and BREAK interrupts, the graphics modes, MP-1710 colour and
 border, and tape loading and saving.
 **Not implemented:** printer, expansion cards (MP-9730, MP-1803 floppy).
@@ -34,6 +35,7 @@ The MiSTer updater installs the core and the tape list. To install by hand:
 | Tape overlay | **On**, Off | Tape status and a what-to-type hint |
 | Keyboard layout | **JIS**, US | JIS: keys by position. US: keys type their legend (see below) |
 | Swap Alt/Win keys | **No**, Yes | Moves カナ記号 from Alt to Win |
+| Gamepad to keys | **On**, Off | Gamepad buttons type keys (see below). Off ignores the gamepad |
 | Reset and close OSD | | |
 
 ## Loading tapes
@@ -141,7 +143,8 @@ instead of tapping them.
 
 ## Gamepad
 
-Gamepad buttons type keys. By default the d-pad is the cursor keys, A is
+The real machine had no joystick port, so gamepad buttons type keys. OSD
+*Gamepad to keys* turns this off. By default the d-pad is the cursor keys, A is
 Space and B is Return. If the tape list's line for the mounted program has a
 pad map, its buttons type what it says instead:
 
